@@ -115,6 +115,10 @@ def generate_fanout(query, mode):
         st.session_state.generation_details = None
         return None
 
+# Initialize session state for generation_details if not present
+if 'generation_details' not in st.session_state:
+    st.session_state.generation_details = None
+
 # Batch processing functions
 def validate_csv_upload(uploaded_file) -> tuple[bool, str, pd.DataFrame]:
     """Validate uploaded CSV file and return validation status, message, and dataframe."""
@@ -206,20 +210,15 @@ def process_batch_queries(queries: List[str], mode: str) -> List[Dict[str, Any]]
     
     return all_results
 
-# Initialize session state for generation_details if not present
-if 'generation_details' not in st.session_state:
+# Generate and display results
+if st.sidebar.button("Run Fan-Out 🚀"):
+    # Clear previous details
     st.session_state.generation_details = None
-
-# Single Query Mode UI
-if processing_mode == "Single Query":
-    st.sidebar.subheader("Single Query Input")
-    user_query = st.sidebar.text_area("Enter your query", "What's the best electric SUV for driving up mt rainier?", height=120)
     
-    if st.sidebar.button("Run Fan-Out 🚀"):
-        # Clear previous details
-        st.session_state.generation_details = None
-        
-        if not user_query.strip():
+    if processing_mode == "Single Query":
+        if not mode:
+            st.warning("⚠️ Please select a Search Mode.")
+        elif not user_query.strip():
             st.warning("⚠️ Please enter a query.")
         else:
             with st.spinner("🤖 Generating query fan-out using Gemini... This may take a moment..."):
@@ -247,6 +246,7 @@ if processing_mode == "Single Query":
                 else:
                      st.info("ℹ️ Generation details (target count, reasoning) were not available from the model's response.")
 
+
                 df = pd.DataFrame(results)
                 st.dataframe(df, use_container_width=True, height=(min(len(df), 20) + 1) * 35 + 3) # Dynamic height
 
@@ -258,77 +258,37 @@ if processing_mode == "Single Query":
                 pass
             else: # Handle empty results list (empty list, not None)
                 st.warning("⚠️ No queries were generated. The model returned an empty list, or there was an issue.")
-
-# Batch Processing Mode UI
-elif processing_mode == "Batch Processing (CSV Upload)":
-    st.sidebar.subheader("Batch Processing")
-    uploaded_file = st.sidebar.file_uploader("Choose a CSV file", type=["csv"])
-    
-    if uploaded_file is not None:
-        validation_status, message, df_clean = validate_csv_upload(uploaded_file)
+    elif processing_mode == "Batch Processing (CSV Upload)":
+        uploaded_file = st.sidebar.file_uploader("Choose a CSV file", type=["csv"])
         
-        if validation_status:
-            st.success(f"✅ CSV file validated: {message}")
-            st.info(f"Found {len(df_clean)} valid queries in the '{df_clean.columns[0]}' column.")
+        if uploaded_file is not None:
+            validation_status, message, df_clean = validate_csv_upload(uploaded_file)
             
-            # Show preview of uploaded queries
-            st.subheader("📋 Preview of Uploaded Queries")
-            preview_df = df_clean.head(10).copy()
-            preview_df.index = range(1, len(preview_df) + 1)
-            st.dataframe(preview_df, use_container_width=True)
-            
-            if len(df_clean) > 10:
-                st.info(f"Showing first 10 queries. Total queries: {len(df_clean)}")
-            
-            if st.sidebar.button("Process Batch Queries 🚀"):
+            if validation_status:
+                st.success(f"✅ CSV file validated: {message}")
+                st.info(f"Found {len(df_clean)} valid queries in the '{df_clean.columns[0]}' column.")
+                
                 with st.spinner("🤖 Processing batch queries using Gemini... This may take a moment..."):
                     results = process_batch_queries(df_clean[df_clean.columns[0]].tolist(), mode)
                 
                 if results:
                     st.success("✅ Batch processing complete!")
                     
-                    # Display summary statistics
-                    st.subheader("📊 Batch Processing Summary")
-                    total_queries = len(df_clean)
-                    total_results = len(results)
-                    avg_results_per_query = total_results / total_queries if total_queries > 0 else 0
-                    
-                    col1, col2, col3 = st.columns(3)
-                    with col1:
-                        st.metric("Total Input Queries", total_queries)
-                    with col2:
-                        st.metric("Total Generated Queries", total_results)
-                    with col3:
-                        st.metric("Avg Results per Query", f"{avg_results_per_query:.1f}")
-                    
                     # Combine results into a single DataFrame
                     combined_df = pd.DataFrame(results)
                     
-                    st.subheader("📋 Combined Results")
-                    st.dataframe(combined_df, use_container_width=True, height=(min(len(combined_df), 20) + 1) * 35 + 3)
+                    st.dataframe(combined_df, use_container_width=True, height=(min(len(combined_df), 20) + 1) * 35 + 3) # Dynamic height
                     
                     # Download combined results
                     csv = combined_df.to_csv(index=False).encode("utf-8")
                     st.download_button("📥 Download Combined CSV", data=csv, file_name="qforia_batch_output.csv", mime="text/csv")
                     
-                    # Show results by original query
-                    st.subheader("🔍 Results by Original Query")
-                    for i, query in enumerate(df_clean[df_clean.columns[0]].head(3)):  # Show first 3 queries
-                        query_results = combined_df[combined_df['original_query'] == query]
-                        if not query_results.empty:
-                            st.markdown(f"**Query {i+1}:** {query}")
-                            st.dataframe(query_results[['query', 'type', 'user_intent', 'reasoning']], use_container_width=True)
-                            st.markdown("---")
+                    # Display individual query results
+                    st.subheader("Individual Query Results (for a few examples)")
+                    st.dataframe(combined_df[combined_df['batch_processing'] == True].head(5), use_container_width=True, height=(min(5, len(combined_df[combined_df['batch_processing'] == True])) + 1) * 35 + 3)
                 else:
                     st.warning("⚠️ No queries were generated for the batch. The model returned an empty list, or there was an issue.")
+            else:
+                st.error(f"❌ CSV file validation failed: {message}")
         else:
-            st.error(f"❌ CSV file validation failed: {message}")
-    else:
-        st.info("📁 Please upload a CSV file for batch processing.")
-        st.markdown("""
-        **CSV Format Requirements:**
-        - File should contain at least one column with queries
-        - Column names like 'query', 'queries', 'keyword', 'keywords', 'text', 'input', 'prompt' are automatically detected
-        - Empty rows are automatically filtered out
-        - Each row should contain a single query
-        """) 
+            st.warning("⚠️ Please upload a CSV file for batch processing.")
